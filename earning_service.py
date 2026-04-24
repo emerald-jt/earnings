@@ -26,24 +26,25 @@ class EarningService:
 
         amount_cents = self.calculate_amount(start_at, end_at)
 
-        for user_id in req.participants:
-            ledger = self.get_or_create_ledger(user_id)
-            new_recording = UserRecording(
-                start_at=start_at,
-                end_at=end_at,
-                amount=amount_cents,
-                recording_id=req.recording_id,
-                fraud_flag=False
-            )
+        with self.store.lock:
+            for user_id in req.participants:
+                ledger = self.get_or_create_ledger(user_id)
+                new_recording = UserRecording(
+                    start_at=start_at,
+                    end_at=end_at,
+                    amount=amount_cents,
+                    recording_id=req.recording_id,
+                    fraud_flag=False
+                )
 
-            overlaps = self.find_overlap_and_insert(ledger.recordings, new_recording)
-            for overlap in overlaps:
-                new_recording.fraud_flag = True
+                overlaps = self.find_overlap_and_insert(ledger.previous_recordings, new_recording)
                 for overlap in overlaps:
-                    overlap.fraud_flag = True
-            
-            heappush(ledger.pending_recordings, (new_recording.end_at, new_recording))
-            ledger.pending_balance += amount_cents
+                    new_recording.fraud_flag = True
+                    for overlap in overlaps:
+                        overlap.fraud_flag = True
+                
+                heappush(ledger.pending_recordings, (new_recording.end_at, req.recording_id, new_recording))
+                ledger.pending_balance += amount_cents
 
     def calculate_amount(self, start_at: int, end_at: int) -> int:
         duration_seconds = end_at - start_at
@@ -51,11 +52,11 @@ class EarningService:
         return (duration_minute * 100) // 60
     
     def get_or_create_ledger(self, user_id: str) -> UserLedger:
-        return self.store.user_ledgers.setdefault(user_id, UserLedger())
+        return self.store.user_ledgers.setdefault(user_id, UserLedger(user_id=user_id))
     
     def find_overlap_and_insert(self, previous_recordings: list[UserRecording], new_recording: UserRecording) -> UserRecording:
         overlaps: list[UserRecording] = []
-        insert_index = self.store.find_insert_index(previous_recordings, new_recording.start_at)
+        insert_index = self.find_insert_index(previous_recordings, new_recording.start_at)
         left = insert_index - 1
         right = insert_index
         if left >= 0 and previous_recordings[left].end_at > new_recording.start_at:
@@ -77,25 +78,27 @@ class EarningService:
                 right = mid
         return left
     
-    def get_balance(self, user_id: str, current_time: int) -> BalanceResponse:
+    def get_balance(self, user_id: str, current_time: int | None = None) -> BalanceResponse:
         if current_time is None:
             current_time = self.get_current_time()
-        ledger = self.get_or_create_ledger(user_id)
-        self.process_pending_recordings(ledger, current_time)
-        return BalanceResponse(user_id=user_id, balance=str(ledger.balance / 100) + "$")
+        with self.store.lock:
+            ledger = self.get_or_create_ledger(user_id)
+            self.process_pending_recordings(ledger, current_time)
+            return BalanceResponse(user_id=user_id, balance=format(ledger.balance / 100, '.2f') + "$")
     
-    def withdraw(self, req: WithdrawRequest, current_time: int) -> WithdrawResponse:
+    def withdraw(self, req: WithdrawRequest, current_time: int | None = None) -> WithdrawResponse:
         if current_time is None:
             current_time = self.get_current_time()
-        ledger = self.get_or_create_ledger(req.user_id)
-        self.process_pending_recordings(ledger, current_time)
-        if req.withdraw_amount * 100 > ledger.balance:
-            raise ValueError("Insufficient balance")
-        ledger.balance -= int(req.withdraw_amount * 100)
-        return WithdrawResponse(
+        with self.store.lock:
+            ledger = self.get_or_create_ledger(req.user_id)
+            self.process_pending_recordings(ledger, current_time)
+            if req.withdraw_amount * 100 > ledger.balance:
+                raise ValueError("Insufficient balance")
+            ledger.balance -= int(req.withdraw_amount * 100)
+            return WithdrawResponse(
             user_id=req.user_id, 
             withdrawn_amount=str(req.withdraw_amount) + "$",
-            remaining_balance=str(ledger.balance / 100) + "$"
+            remaining_balance=format(ledger.balance / 100, '.2f') + "$"
         )
     
     def get_current_time(self) -> int:
@@ -105,8 +108,8 @@ class EarningService:
         return int(dt.timestamp())
 
     def process_pending_recordings(self, ledger: UserLedger, current_time: int) -> None:
-        while ledger.pending_recordings and ledger.pending_recordings[0][0] <= current_time - delay_seconds:
-            _, recording = heappop(ledger.pending_recordings)
+        while ledger.pending_recordings and ledger.pending_recordings[0][0] <= current_time - self.delay_seconds:
+            _, _, recording = heappop(ledger.pending_recordings)
             if not recording.fraud_flag:
                 ledger.balance += recording.amount
             ledger.pending_balance -= recording.amount

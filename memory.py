@@ -1,5 +1,6 @@
 
 from dataclasses import dataclass, field
+from threading import RLock
 
 @dataclass
 class Recording:
@@ -11,8 +12,8 @@ class Recording:
 @dataclass
 class UserLedger:
     user_id: str
-    balance: int
-    pending_balance: int
+    balance: int = 0
+    pending_balance: int = 0
     pending_recordings: list[tuple[int, UserRecording]] = field(default_factory=list)
     previous_recordings: list[UserRecording] = field(default_factory=list)
 
@@ -28,3 +29,4 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.recordings: dict[str, Recording] = {}
         self.user_ledgers: dict[str, UserLedger] = {}
+        self.lock = RLock()
