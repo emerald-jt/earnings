@@ -25,6 +25,6 @@ class UserRecording:
     fraud_flag: bool = False
 
 class InMemoryStore:
-    def __init__(self):
-        self.recordings = dict[str, Recording] = {}
-        self.user_ledgers = dict[str, UserLedger] = {}
+    def __init__(self) -> None:
+        self.recordings: dict[str, Recording] = {}
+        self.user_ledgers: dict[str, UserLedger] = {}

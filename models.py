@@ -1,9 +1,10 @@
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 class RecordingEndRequest(BaseModel):
     recording_id: str = Field(min_length=1)
-    start_at: int
-    end_at: int
+    start_at: datetime
+    end_at: datetime
     participants: list[str] = Field(min_length=1)
 
 class WithdrawRequest(BaseModel):

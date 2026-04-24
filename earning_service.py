@@ -9,7 +9,9 @@ class EarningService:
         self.delay_seconds = delay_seconds
 
     def end_recording(self, req: RecordingEndRequest):
-        if req.end_at <= req.start_at:
+        end_at = self.to_int_time(req.end_at)
+        start_at = self.to_int_time(req.start_at)
+        if end_at <= start_at:
             raise ValueError("end time must be after start time")
 
         if req.recording_id in self.store.recordings:
@@ -17,18 +19,18 @@ class EarningService:
 
         self.store.recordings[req.recording_id] = Recording(
             recording_id=req.recording_id,
-            start_at=req.start_at,
-            end_at=req.end_at,
+            start_at=start_at,
+            end_at=end_at,
             participants=req.participants
         )
 
-        amount_cents = self.calculate_amount(req.start_at, req.end_at)
+        amount_cents = self.calculate_amount(start_at, end_at)
 
         for user_id in req.participants:
             ledger = self.get_or_create_ledger(user_id)
             new_recording = UserRecording(
-                start_at=req.start_at,
-                end_at=req.end_at,
+                start_at=start_at,
+                end_at=end_at,
                 amount=amount_cents,
                 recording_id=req.recording_id,
                 fraud_flag=False
@@ -98,6 +100,9 @@ class EarningService:
     
     def get_current_time(self) -> int:
         return int(datetime.now(timezone.utc).timestamp())
+    
+    def to_int_time(self, dt: datetime) -> int:
+        return int(dt.timestamp())
 
     def process_pending_recordings(self, ledger: UserLedger, current_time: int) -> None:
         while ledger.pending_recordings and ledger.pending_recordings[0][0] <= current_time - delay_seconds:
